@@ -371,16 +371,18 @@ function GamePage() {
               }`}
             >
               {value != null ? (
-                <Die
-                  value={value}
-                  size="sm"
-                  className={revealed ? "animate-pop-in" : ""}
-                  {...(mine && !myReady && slots[col] != null
-                    ? {
-                        onPointerDown: undefined,
-                      }
-                    : {})}
-                />
+                <span
+                  className="touch-none"
+                  onPointerDown={(e) => {
+                    const id = slots[col];
+                    if (!mine || myReady || revealed || id == null || !dice) return;
+                    e.preventDefault();
+                    setDrag({ kind: "die", id, value: dice[id]!, x: e.clientX, y: e.clientY });
+                  }}
+                >
+                  <Die value={value} size="sm" className={revealed ? "animate-pop-in" : ""} />
+                </span>
+
               ) : filled ? (
                 <Die value={1} size="sm" hidden />
               ) : (
