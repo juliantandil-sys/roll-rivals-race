@@ -142,3 +142,37 @@
     color: var(--color-foreground);
   }
 }
+
+/* --- Juego de dados: tokens propios --- */
+:root {
+  --col-green: oklch(0.74 0.19 145);
+  --col-red: oklch(0.62 0.24 27);
+  --col-blue: oklch(0.62 0.19 255);
+  --col-yellow: oklch(0.85 0.17 90);
+  --board: oklch(0.22 0.03 265);
+  --board-line: oklch(0.34 0.03 265);
+  --ball: oklch(0.16 0.02 265);
+}
+
+@theme inline {
+  --color-col-green: var(--col-green);
+  --color-col-red: var(--col-red);
+  --color-col-blue: var(--col-blue);
+  --color-col-yellow: var(--col-yellow);
+  --color-board: var(--board);
+  --color-board-line: var(--board-line);
+  --color-ball: var(--ball);
+}
+
+@keyframes die-roll {
+  0% { transform: rotate(0deg) scale(0.8); }
+  50% { transform: rotate(180deg) scale(1.1); }
+  100% { transform: rotate(360deg) scale(1); }
+}
+@keyframes pop-in {
+  0% { transform: scale(0.4); opacity: 0; }
+  70% { transform: scale(1.12); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+.animate-die-roll { animation: die-roll 0.6s ease-out; }
+.animate-pop-in { animation: pop-in 0.35s ease-out; }
