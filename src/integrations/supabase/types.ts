@@ -14,7 +14,133 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      game_players: {
+        Row: {
+          created_at: string
+          game_id: string
+          id: string
+          side: string | null
+          token: string
+        }
+        Insert: {
+          created_at?: string
+          game_id: string
+          id?: string
+          side?: string | null
+          token?: string
+        }
+        Update: {
+          created_at?: string
+          game_id?: string
+          id?: string
+          side?: string | null
+          token?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "game_players_game_id_fkey"
+            columns: ["game_id"]
+            isOneToOne: false
+            referencedRelation: "games"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      game_secrets: {
+        Row: {
+          assignment: number[] | null
+          created_at: string
+          dice: number[]
+          game_id: string
+          id: string
+          round_number: number
+          side: string
+        }
+        Insert: {
+          assignment?: number[] | null
+          created_at?: string
+          dice: number[]
+          game_id: string
+          id?: string
+          round_number: number
+          side: string
+        }
+        Update: {
+          assignment?: number[] | null
+          created_at?: string
+          dice?: number[]
+          game_id?: string
+          id?: string
+          round_number?: number
+          side?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "game_secrets_game_id_fkey"
+            columns: ["game_id"]
+            isOneToOne: false
+            referencedRelation: "games"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      games: {
+        Row: {
+          balls: number[]
+          bottom_ready: boolean
+          bottom_seen: string | null
+          bottom_taken: boolean
+          code: string
+          created_at: string
+          current_column: number
+          id: string
+          phase: string
+          reveal: Json
+          round_number: number
+          top_ready: boolean
+          top_seen: string | null
+          top_taken: boolean
+          updated_at: string
+          winner: string | null
+        }
+        Insert: {
+          balls?: number[]
+          bottom_ready?: boolean
+          bottom_seen?: string | null
+          bottom_taken?: boolean
+          code: string
+          created_at?: string
+          current_column?: number
+          id?: string
+          phase?: string
+          reveal?: Json
+          round_number?: number
+          top_ready?: boolean
+          top_seen?: string | null
+          top_taken?: boolean
+          updated_at?: string
+          winner?: string | null
+        }
+        Update: {
+          balls?: number[]
+          bottom_ready?: boolean
+          bottom_seen?: string | null
+          bottom_taken?: boolean
+          code?: string
+          created_at?: string
+          current_column?: number
+          id?: string
+          phase?: string
+          reveal?: Json
+          round_number?: number
+          top_ready?: boolean
+          top_seen?: string | null
+          top_taken?: boolean
+          updated_at?: string
+          winner?: string | null
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
