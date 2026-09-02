@@ -90,16 +90,21 @@ export type Database = {
           bottom_ready: boolean
           bottom_seen: string | null
           bottom_taken: boolean
+          bottom_hand_roll: number | null
           code: string
           created_at: string
           current_column: number
           id: string
+          direction: string | null
+          hand_side: string | null
           phase: string
           reveal: Json
           round_number: number
           top_ready: boolean
           top_seen: string | null
           top_taken: boolean
+          top_hand_roll: number | null
+          sequence_started: boolean
           updated_at: string
           winner: string | null
         }
@@ -108,16 +113,21 @@ export type Database = {
           bottom_ready?: boolean
           bottom_seen?: string | null
           bottom_taken?: boolean
+          bottom_hand_roll?: number | null
           code: string
           created_at?: string
           current_column?: number
           id?: string
+          direction?: string | null
+          hand_side?: string | null
           phase?: string
           reveal?: Json
           round_number?: number
           top_ready?: boolean
           top_seen?: string | null
           top_taken?: boolean
+          top_hand_roll?: number | null
+          sequence_started?: boolean
           updated_at?: string
           winner?: string | null
         }
@@ -126,16 +136,21 @@ export type Database = {
           bottom_ready?: boolean
           bottom_seen?: string | null
           bottom_taken?: boolean
+          bottom_hand_roll?: number | null
           code?: string
           created_at?: string
           current_column?: number
           id?: string
+          direction?: string | null
+          hand_side?: string | null
           phase?: string
           reveal?: Json
           round_number?: number
           top_ready?: boolean
           top_seen?: string | null
           top_taken?: boolean
+          top_hand_roll?: number | null
+          sequence_started?: boolean
           updated_at?: string
           winner?: string | null
         }

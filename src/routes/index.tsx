@@ -71,7 +71,7 @@ function Index() {
           ))}
         </div>
         <h1 className="text-4xl font-black tracking-tight text-foreground sm:text-5xl">
-          DADOS &amp; BOLAS
+          Front.ON
         </h1>
         <p className="mt-3 max-w-md text-sm text-muted-foreground">
           Duelo 1 vs 1 en tiempo real. Tirá tus 4 dados en secreto, ganá columnas y empujá una bola

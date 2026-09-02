@@ -9,22 +9,23 @@ import {
   COLUMNS,
   ROWS,
   chooseSide,
+  chooseDirection,
   getMyState,
   heartbeat,
   joinGame,
-  moveBall,
   playAgain,
   submitAssignment,
   type PublicGame,
+  type Direction,
   type Side,
 } from "@/lib/game.functions";
 
 export const Route = createFileRoute("/game/$code")({
   head: ({ params }) => ({
     meta: [
-      { title: `Partida ${params.code} — Dados & Bolas` },
+      { title: `Front.ON — Partida ${params.code}` },
       { name: "description", content: "Duelo de dados 1 vs 1 en tiempo real." },
-      { property: "og:title", content: `Partida ${params.code} — Dados & Bolas` },
+      { property: "og:title", content: `Front.ON — Partida ${params.code}` },
       { property: "og:description", content: "Duelo de dados 1 vs 1 en tiempo real." },
     ],
   }),
@@ -37,7 +38,6 @@ const TEXT_CLASS = ["text-col-green", "text-col-red", "text-col-blue", "text-col
 type DieItem = { id: number; value: number };
 type DragState =
   | { kind: "die"; id: number; value: number; x: number; y: number }
-  | { kind: "ball"; column: number; x: number; y: number }
   | null;
 
 function pips(value: number) {
@@ -91,7 +91,7 @@ function GamePage() {
   const doJoin = useServerFn(joinGame);
   const doChooseSide = useServerFn(chooseSide);
   const doSubmit = useServerFn(submitAssignment);
-  const doMoveBall = useServerFn(moveBall);
+  const doChooseDirection = useServerFn(chooseDirection);
   const doPlayAgain = useServerFn(playAgain);
   const doHeartbeat = useServerFn(heartbeat);
 
@@ -105,8 +105,9 @@ function GamePage() {
   const [drag, setDrag] = useState<DragState>(null);
   const [selected, setSelected] = useState<number | null>(null);
   const [copied, setCopied] = useState(false);
+  const [historicalTotals, setHistoricalTotals] = useState<{ top: number | null; bottom: number | null }>({ top: null, bottom: null });
+  const [now, setNow] = useState(() => Date.now());
 
-  const boardRef = useRef<HTMLDivElement | null>(null);
   const roundRef = useRef<number>(-1);
 
   const items: DieItem[] = useMemo(
@@ -123,6 +124,7 @@ function GamePage() {
         setSide(res.side);
         setDice(res.dice);
         setServerAssignment(res.assignment);
+        setHistoricalTotals(res.historicalTotals);
         setError(null);
       } catch (e) {
         setError(e instanceof Error ? e.message : "Error de conexión");
@@ -175,6 +177,11 @@ function GamePage() {
     };
   }, [token, code, refresh, doHeartbeat]);
 
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 250);
+    return () => clearInterval(timer);
+  }, []);
+
   // Reset local dice placement on a new round.
   useEffect(() => {
     if (!game) return;
@@ -202,10 +209,11 @@ function GamePage() {
   const rivalSeen = game ? (side === "top" ? game.bottom_seen : game.top_seen) : null;
   const rivalOnline = rivalSeen ? Date.now() - new Date(rivalSeen).getTime() < 15000 : false;
   const bothSides = !!game && game.top_taken && game.bottom_taken;
-  const currentEntry = game ? game.reveal?.[String(game.current_column)] : undefined;
-  const canMoveBall =
-    !!game && game.phase === "MOVING_BALL" && !!currentEntry && currentEntry.winner === side;
-
+  const readyDeadline = game?.ready_deadline ? new Date(game.ready_deadline).getTime() : null;
+  const readyMilliseconds = readyDeadline ? Math.max(0, readyDeadline - now) : 0;
+  const readyRemaining = Math.ceil(readyMilliseconds / 1000);
+  const osadiaActive = game?.phase === "PLACING_DICE" && game.top_ready !== game.bottom_ready && readyMilliseconds > 0;
+  const missingReadySide = game?.top_ready ? "bottom" : "top";
   /* ------------------------- drag & drop ------------------------- */
 
   useEffect(() => {
@@ -223,8 +231,6 @@ function GamePage() {
         const target = el?.closest("[data-slot-col]") as HTMLElement | null;
         if (target) placeDie(d.id, Number(target.dataset["slotCol"]));
         else removeDie(d.id);
-      } else {
-        dropBall(d.column, e.clientY);
       }
     };
     window.addEventListener("pointermove", onMove, { passive: false });
@@ -258,25 +264,6 @@ function GamePage() {
     setSlots((prev) => prev.map((v) => (v === id ? null : v)));
   };
 
-  const dropBall = async (column: number, clientY: number) => {
-    if (!canMoveBall || !token || !game) return;
-    const rect = boardRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    const step = side === "top" ? 1 : -1;
-    const target = game.balls[column]! + step;
-    const cellH = rect.height / ROWS;
-    const pointerRow = Math.floor((clientY - rect.top) / cellH);
-    const reachedOut = side === "top" ? clientY > rect.bottom - cellH * 0.35 : clientY < rect.top + cellH * 0.35;
-    const ok = target >= ROWS || target < 0 ? reachedOut : pointerRow === target || (side === "top" ? clientY > rect.top + target * cellH : clientY < rect.top + (target + 1) * cellH);
-    if (!ok) return;
-    try {
-      await doMoveBall({ data: { token, column, targetRow: target } });
-      await refresh(token);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Movimiento inválido");
-    }
-  };
-
   /* ------------------------- actions ------------------------- */
 
   const pickSide = async (s: Side) => {
@@ -286,6 +273,16 @@ function GamePage() {
       await refresh(token);
     } catch (e) {
       setError(e instanceof Error ? e.message : "No se pudo elegir el lado");
+    }
+  };
+
+  const pickDirection = async (direction: Direction) => {
+    if (!token) return;
+    try {
+      await doChooseDirection({ data: { token, direction } });
+      await refresh(token);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No se pudo elegir el sentido");
     }
   };
 
@@ -326,11 +323,40 @@ function GamePage() {
 
   const phaseLabel: Record<string, string> = {
     WAITING_FOR_PLAYER: "Esperando al rival",
-    SELECTING_SIDES: "Eligiendo lados",
+    SELECTING_SIDES: game.hand_side && !game.direction ? "El jugador mano elige el sentido" : "Eligiendo lados",
+    SELECTING_DIRECTION: "El jugador mano elige el sentido",
     PLACING_DICE: "Colocá tus dados",
     REVEALING_COLUMN: `Revelando ${COLUMNS[game.current_column]}`,
-    MOVING_BALL: `Moviendo la bola de ${COLUMNS[game.current_column]}`,
+    MOVING_BALL: `La bola avanza en ${COLUMNS[game.current_column]}`,
     GAME_OVER: "Partida terminada",
+  };
+
+  const renderTray = () => {
+    if (!side || game.phase !== "PLACING_DICE") return null;
+    return (
+      <div className="rounded-2xl border border-border bg-card p-4">
+        <p className="mb-3 text-xs text-muted-foreground">
+          {myReady
+            ? rivalReady ? "Esperando que la mano elija el sentido..." : "Esperando al rival..."
+            : "Arrastrá (o tocá y luego elegí columna) para asignar un dado por columna."}
+        </p>
+        <div className="flex min-h-14 flex-wrap items-center gap-3">
+          {trayItems.length === 0 && <span className="text-sm text-muted-foreground">Todos los dados asignados</span>}
+          {trayItems.map((it) => (
+            <span key={it.id} onPointerDown={(e) => {
+              if (myReady) return;
+              e.preventDefault();
+              setDrag({ kind: "die", id: it.id, value: it.value, x: e.clientX, y: e.clientY });
+            }} onClick={() => !myReady && setSelected(it.id)} className={`touch-none ${selected === it.id ? "rounded-xl ring-2 ring-foreground" : ""} ${drag?.kind === "die" && drag.id === it.id ? "opacity-30" : ""}`}>
+              <Die value={it.value} className="animate-die-roll cursor-grab" />
+            </span>
+          ))}
+        </div>
+        <Button className="mt-4 w-full" size="lg" disabled={myReady || slots.some((s) => s == null)} onClick={confirmReady}>
+          {myReady ? "Esperando al rival..." : "Estoy listo"}
+        </Button>
+      </div>
+    );
   };
 
   const renderSlotRow = (rowSide: Side) => {
@@ -429,6 +455,19 @@ function GamePage() {
           )}
         </div>
 
+        <div className="grid grid-cols-2 gap-2 text-center text-xs">
+          <div className="rounded-lg border border-border bg-card px-3 py-2">
+            <span className="text-muted-foreground">Histórico Superior</span>
+            <strong className="ml-2 text-lg text-foreground">{historicalTotals.top ?? "?"}</strong>
+          </div>
+          <div className="rounded-lg border border-border bg-card px-3 py-2">
+            <span className="text-muted-foreground">Histórico Inferior</span>
+            <strong className="ml-2 text-lg text-foreground">{historicalTotals.bottom ?? "?"}</strong>
+          </div>
+        </div>
+
+        {side === "top" && renderTray()}
+
         {/* Top player */}
         <div className="flex items-center justify-between text-xs font-semibold tracking-wide uppercase">
           <span>
@@ -464,15 +503,27 @@ function GamePage() {
         </div>
 
         {/* Board */}
-        <div
-          ref={boardRef}
-          className="grid touch-none grid-cols-4 overflow-hidden rounded-2xl border-2 border-board-line bg-board"
-          style={{ gridTemplateRows: `repeat(${ROWS}, minmax(0, 1fr))`, aspectRatio: "4 / 7" }}
-        >
+        <div className="relative mx-8 sm:mx-12">
+          {osadiaActive && (
+            <>
+              <div className={`osadia-side-bar osadia-side-left ${missingReadySide === "top" ? "osadia-toward-top" : "osadia-toward-bottom"}`}>
+                <strong className="osadia-label">OSADÍA</strong>
+                <span className="osadia-seconds">00:{String(readyRemaining).padStart(2, "0")}</span>
+                <span className="osadia-track"><span className="osadia-progress" style={{ height: `${(readyMilliseconds / 15000) * 100}%` }} /></span>
+              </div>
+              <div className={`osadia-side-bar osadia-side-right ${missingReadySide === "top" ? "osadia-toward-top" : "osadia-toward-bottom"}`} aria-hidden="true">
+                <strong className="osadia-label">OSADÍA</strong>
+                <span className="osadia-seconds">00:{String(readyRemaining).padStart(2, "0")}</span>
+                <span className="osadia-track"><span className="osadia-progress" style={{ height: `${(readyMilliseconds / 15000) * 100}%` }} /></span>
+              </div>
+            </>
+          )}
+          <div
+            className="relative grid touch-none grid-cols-4 overflow-hidden rounded-2xl border-2 border-board-line bg-board"
+            style={{ gridTemplateRows: `repeat(${ROWS}, minmax(0, 1fr))`, aspectRatio: "8 / 7" }}
+          >
           {Array.from({ length: ROWS }).map((_, row) =>
             COLUMNS.map((_, col) => {
-              const hasBall = game.balls[col] === row;
-              const draggable = hasBall && canMoveBall && col === game.current_column;
               return (
                 <div
                   key={`${row}-${col}`}
@@ -482,24 +533,18 @@ function GamePage() {
                   <span
                     className={`pointer-events-none absolute inset-0 ${COLOR_CLASS[col]} opacity-[0.07]`}
                   />
-                  {hasBall && (
-                    <span
-                      onPointerDown={(e) => {
-                        if (!draggable) return;
-                        e.preventDefault();
-                        setDrag({ kind: "ball", column: col, x: e.clientX, y: e.clientY });
-                      }}
-                      className={`z-10 h-[72%] max-h-12 w-[72%] max-w-12 rounded-full bg-ball shadow-lg ring-2 transition-transform ${
-                        draggable
-                          ? "cursor-grab ring-foreground animate-pulse touch-none"
-                          : "ring-board-line"
-                      } ${drag?.kind === "ball" && drag.column === col ? "opacity-30" : ""}`}
-                    />
-                  )}
                 </div>
               );
             }),
           )}
+          {game.balls.map((ballRow, col) => (
+            <span
+              key={`ball-${col}`}
+              className="pointer-events-none absolute z-10 aspect-square w-[9%] rounded-full bg-ball shadow-lg ring-2 ring-board-line transition-[top] duration-[1500ms] ease-in-out"
+              style={{ left: `${col * 25 + 12.5}%`, top: `${(ballRow + 0.5) * (100 / ROWS)}%`, transform: "translate(-50%, -50%)" }}
+            />
+          ))}
+          </div>
         </div>
 
         {/* Bottom player */}
@@ -514,56 +559,18 @@ function GamePage() {
           </span>
         </div>
 
-        {/* Tray */}
-        {side && game.phase === "PLACING_DICE" && (
-          <div className="rounded-2xl border border-border bg-card p-4">
-            <p className="mb-3 text-xs text-muted-foreground">
-              {myReady
-                ? rivalReady
-                  ? "Revelando..."
-                  : "Esperando al rival..."
-                : "Arrastrá (o tocá y luego elegí columna) para asignar un dado por columna."}
-            </p>
-            <div className="flex min-h-14 flex-wrap items-center gap-3">
-              {trayItems.length === 0 && (
-                <span className="text-sm text-muted-foreground">Todos los dados asignados</span>
-              )}
-              {trayItems.map((it) => (
-                <span
-                  key={it.id}
-                  onPointerDown={(e) => {
-                    if (myReady) return;
-                    e.preventDefault();
-                    setDrag({ kind: "die", id: it.id, value: it.value, x: e.clientX, y: e.clientY });
-                  }}
-                  onClick={() => !myReady && setSelected(it.id)}
-                  className={`touch-none ${selected === it.id ? "ring-2 ring-foreground rounded-xl" : ""} ${
-                    drag?.kind === "die" && drag.id === it.id ? "opacity-30" : ""
-                  }`}
-                >
-                  <Die value={it.value} className="animate-die-roll cursor-grab" />
-                </span>
-              ))}
-            </div>
-            <Button
-              className="mt-4 w-full"
-              size="lg"
-              disabled={myReady || slots.some((s) => s == null)}
-              onClick={confirmReady}
-            >
-              {myReady ? "Esperando al rival..." : "Estoy listo"}
-            </Button>
-          </div>
-        )}
-
-        {canMoveBall && (
-          <div className="rounded-2xl border border-border bg-accent p-4 text-center text-sm font-semibold">
-            ¡Ganaste {COLUMNS[game.current_column]}! Arrastrá la bola hacia el lado rival.
-          </div>
-        )}
+        {side === "bottom" && renderTray()}
 
         {error && <p className="text-center text-sm text-destructive">{error}</p>}
       </div>
+
+      {(game.phase === "REVEALING_COLUMN" || game.phase === "MOVING_BALL") && (
+        <div className="fixed left-3 top-1/2 z-30 -translate-y-1/2 rounded-r-xl border border-l-0 border-border bg-card px-3 py-4 text-center shadow-xl sm:left-0 sm:px-5">
+          <p className="text-[10px] font-black tracking-[0.2em] text-col-yellow">COMIENZA</p>
+          <p className="text-sm font-black tracking-[0.12em] text-foreground">LA ACCIÓN</p>
+          <p className="mt-2 text-[10px] text-muted-foreground">{phaseLabel[game.phase]}</p>
+        </div>
+      )}
 
       {/* Side selection overlay */}
       {!side && game.phase !== "GAME_OVER" && (
@@ -588,6 +595,31 @@ function GamePage() {
         </div>
       )}
 
+      {side && game.phase === "PLACING_DICE" && game.hand_side && !game.direction && (
+        <div className="fixed bottom-4 right-4 z-40 w-64 rounded-2xl border border-border bg-card p-4 text-center shadow-xl">
+          <h2 className="text-sm font-bold">Mano de la ronda</h2>
+          <div className="mt-3 flex flex-col items-center gap-2">
+            <div className="flex items-center gap-2"><Die value={game.top_hand_roll ?? 1} size="sm" /><span className="text-xs text-muted-foreground">Superior</span></div>
+            <div className="flex items-center gap-2"><Die value={game.bottom_hand_roll ?? 1} size="sm" /><span className="text-xs text-muted-foreground">Inferior</span></div>
+          </div>
+          <p className="mt-3 text-xs text-muted-foreground">
+            Mano: <strong className="text-foreground">{game.hand_side === "top" ? "Superior" : "Inferior"}</strong>
+          </p>
+          {myReady && rivalReady ? (
+            game.hand_side === side ? (
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <Button size="sm" onClick={() => pickDirection("left-to-right")}>Izquierda → derecha</Button>
+                <Button size="sm" variant="secondary" onClick={() => pickDirection("right-to-left")}>Derecha → izquierda</Button>
+              </div>
+            ) : (
+              <p className="mt-3 text-xs text-muted-foreground">Esperando que la mano elija el sentido.</p>
+            )
+          ) : (
+            <p className="mt-3 text-xs text-muted-foreground">Coloquen los dados y presionen Estoy listo.</p>
+          )}
+        </div>
+      )}
+
       {side && !bothSides && game.phase !== "GAME_OVER" && (
         <div className="fixed inset-x-0 bottom-4 z-30 flex justify-center px-4">
           <div className="rounded-full border border-border bg-card px-4 py-2 text-sm shadow-lg">
@@ -604,6 +636,10 @@ function GamePage() {
             <h2 className="text-5xl font-black sm:text-7xl">
               {game.winner === side ? "🏆 ¡GANASTE!" : "😔 PERDISTE"}
             </h2>
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              <div className="rounded-xl border border-border bg-card px-4 py-3">Superior <strong className="ml-2 text-xl">{historicalTotals.top ?? "?"}</strong></div>
+              <div className="rounded-xl border border-border bg-card px-4 py-3">Inferior <strong className="ml-2 text-xl">{historicalTotals.bottom ?? "?"}</strong></div>
+            </div>
             <Button size="lg" onClick={rematch}>
               Jugar otra vez
             </Button>

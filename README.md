@@ -1,6 +1,6 @@
-# Dice Duel Dash
+# Front.ON
 
-Prompt para Lovable
+## Concepto del juego
 
 Quiero desarrollar un minijuego multijugador 1 vs 1 en tiempo real, jugable desde dos navegadores/dispositivos diferentes.
 
@@ -609,18 +609,6 @@ No quiero botones que simplemente cambien visualmente el estado sin modificar el
 Quiero poder abrir dos ventanas del navegador, entrar con dos jugadores diferentes y jugar una partida completa entre ambos.
 
 Si es necesario crear/configurar tablas, políticas RLS, canales Realtime o funciones RPC en Supabase, hacelo.
-
-This project was built with [Lovable](https://lovable.dev).
-
-**Live app**: https://roll-rivals-race.lovable.app
-
-## Build with Lovable
-
-Continue developing this project in the [Lovable editor](https://lovable.dev/projects/b3b50dda-5b9f-48ce-89bc-7bc06ecbfe00).
-
-- **Ship faster**: describe what you want to build and Lovable handles the code.
-- **Stay in sync**: every change made in Lovable is committed straight to this repository.
-- **Full ownership**: this code is yours. Push to `main` on GitHub and your changes sync back into Lovable, ready for your next prompt.
 
 ## Development
 
