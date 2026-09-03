@@ -33,6 +33,7 @@ export type PublicGame = {
   bottom_hand_roll: number | null;
   hand_side: Side | null;
   direction: Direction | null;
+  osadia_started_at: string | null;
   ready_deadline: string | null;
   sequence_started: boolean;
   winner: Side | null;
@@ -43,6 +44,7 @@ type GameMeta = {
   bottom_hand_roll?: number;
   hand_side?: Side;
   direction?: Direction;
+  osadia_started_at?: string | null;
   ready_deadline?: string | null;
 };
 
@@ -90,13 +92,25 @@ async function getGame(db: any, gameId: string): Promise<PublicGame> {
     bottom_hand_roll: meta.bottom_hand_roll ?? null,
     hand_side: meta.hand_side ?? null,
     direction: meta.direction ?? null,
+    osadia_started_at: meta.osadia_started_at ?? null,
     ready_deadline: meta.ready_deadline ?? null,
-    sequence_started: false,
+    sequence_started: data.sequence_started ?? false,
   } as PublicGame;
 }
 
 async function dealRound(db: any, game: PublicGame) {
   const round = game.round_number;
+  const now = Date.now();
+  const meta = (game.reveal?.["__meta"] ?? {}) as GameMeta;
+  const reveal = {
+    ...(game.reveal ?? {}),
+    __meta: {
+      ...meta,
+      direction: meta.direction ?? "left-to-right",
+      osadia_started_at: new Date(now + 15000).toISOString(),
+      ready_deadline: new Date(now + 30000).toISOString(),
+    },
+  };
   await db.from("game_secrets").insert([
     { game_id: game.id, round_number: round, side: "top", dice: rollDice(), assignment: null },
     { game_id: game.id, round_number: round, side: "bottom", dice: rollDice(), assignment: null },
@@ -105,7 +119,8 @@ async function dealRound(db: any, game: PublicGame) {
       round_number: round,
       phase: "PLACING_DICE",
       current_column: 0,
-      reveal: game.reveal,
+      reveal,
+      sequence_started: false,
       top_ready: false,
       bottom_ready: false,
       updated_at: new Date().toISOString(),
@@ -116,24 +131,28 @@ async function dealRound(db: any, game: PublicGame) {
 async function autoCompleteExpiredRound(db: any, game: PublicGame) {
   const meta = (game.reveal?.__meta ?? {}) as GameMeta;
   if (!meta.ready_deadline || Date.now() < new Date(meta.ready_deadline).getTime()) return game;
-  const missingSide = game.top_ready ? ("bottom" as const) : game.bottom_ready ? ("top" as const) : null;
-  if (!missingSide || (game.top_ready && game.bottom_ready)) return game;
-  const { data: secret } = await db.from("game_secrets")
-    .select("dice").eq("game_id", game.id).eq("round_number", game.round_number).eq("side", missingSide).maybeSingle();
-  if (!secret) return game;
-  const { data: claimed, error } = await db.from("game_secrets")
-    .update({ assignment: secret.dice }).eq("game_id", game.id).eq("round_number", game.round_number)
-    .eq("side", missingSide).is("assignment", null).select("id").maybeSingle();
-  if (error) throw new Error(`No se pudieron acomodar los dados: ${error.message}`);
-  if (claimed) {
-    const nextReveal = { ...(game.reveal ?? {}), __meta: { ...meta, ready_deadline: null } };
-    const { error: gameError } = await db.from("games").update({
-      [missingSide === "top" ? "top_ready" : "bottom_ready"]: true,
-      reveal: nextReveal,
-      updated_at: new Date().toISOString(),
-    }).eq("id", game.id).eq(missingSide === "top" ? "top_ready" : "bottom_ready", false);
-    if (gameError) throw new Error(`No se pudo confirmar el tiempo: ${gameError.message}`);
+  const missingSides = [
+    ...(game.top_ready ? [] : ["top" as const]),
+    ...(game.bottom_ready ? [] : ["bottom" as const]),
+  ];
+  for (const missingSide of missingSides) {
+    const { data: secret } = await db.from("game_secrets")
+      .select("dice").eq("game_id", game.id).eq("round_number", game.round_number).eq("side", missingSide).maybeSingle();
+    if (!secret) continue;
+    const { error } = await db.from("game_secrets")
+      .update({ assignment: secret.dice }).eq("game_id", game.id).eq("round_number", game.round_number)
+      .eq("side", missingSide).is("assignment", null);
+    if (error) throw new Error(`No se pudieron acomodar los dados: ${error.message}`);
   }
+  const nextReveal = { ...(game.reveal ?? {}), __meta: { ...meta, ready_deadline: null, osadia_started_at: null } };
+  const { error: gameError } = await db.from("games").update({
+    top_ready: true,
+    bottom_ready: true,
+    reveal: nextReveal,
+    updated_at: new Date().toISOString(),
+  }).eq("id", game.id).eq("phase", "PLACING_DICE");
+  if (gameError) throw new Error(`No se pudo confirmar el tiempo: ${gameError.message}`);
+  await startRoundSequence(db, game.id);
   return getGame(db, game.id);
 }
 
@@ -180,10 +199,22 @@ async function prepareNextRound(db: any, game: PublicGame) {
     reveal,
     top_ready: false,
     bottom_ready: false,
+    sequence_started: false,
     updated_at: new Date().toISOString(),
   }).eq("id", game.id);
   if (error) throw new Error(`No se pudo preparar la siguiente ronda: ${error.message}`);
   await dealRound(db, { ...game, round_number: nextRound, phase: "PLACING_DICE", reveal });
+}
+
+async function startRoundSequence(db: any, gameId: string) {
+  const { data: claimed, error } = await db.from("games").update({
+    phase: "REVEALING_COLUMN",
+    sequence_started: true,
+  }).eq("id", gameId).eq("phase", "PLACING_DICE")
+    .eq("top_ready", true).eq("bottom_ready", true).eq("sequence_started", false)
+    .select("id").maybeSingle();
+  if (error) throw new Error(`No se pudo iniciar la secuencia: ${error.message}`);
+  if (claimed) await runRoundSequence(db, gameId);
 }
 
 async function runRoundSequence(db: any, gameId: string) {
@@ -211,7 +242,7 @@ async function runRoundSequence(db: any, gameId: string) {
     } else {
       const step = winner === "top" ? 1 : -1;
       const margin = Math.abs(tv - bv);
-      let distance = margin > 4 ? 2 : 1;
+      let distance = margin >= 4 ? 2 : 1;
       const target = balls[column]! + step * distance;
       if (target >= ROWS || target < 0) distance = 1;
       const finalTarget = balls[column]! + step * distance;
@@ -331,31 +362,11 @@ export const chooseSide = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
-export const chooseDirection = createServerFn({ method: "POST" })
-  .inputValidator((d: { token: string; direction: Direction }) => ({
-    token: String(d.token),
-    direction: d.direction === "right-to-left" ? ("right-to-left" as const) : ("left-to-right" as const),
-  }))
-  .handler(async ({ data }) => {
-    const db = await admin();
-    const player = await getPlayer(db, data.token);
-    const game = await getGame(db, player.game_id);
-    if (game.phase !== "PLACING_DICE" || !game.hand_side || game.direction)
-      throw new Error("No es momento de elegir el sentido");
-    if (game.hand_side !== player.side) throw new Error("Solo el jugador mano puede elegir el sentido");
-    const reveal = { ...(game.reveal ?? {}), __meta: { ...(game.reveal?.__meta as GameMeta ?? {}), direction: data.direction } };
-    const { data: claimed, error } = await db.from("games").update({ reveal })
-      .eq("id", game.id).eq("phase", "PLACING_DICE")
-      .eq("top_ready", true).eq("bottom_ready", true).select("id").maybeSingle();
-    if (error) throw new Error(`No se pudo elegir el sentido: ${error.message}`);
-    if (claimed) await runRoundSequence(db, game.id);
-    return { ok: true };
-  });
-
 export const submitAssignment = createServerFn({ method: "POST" })
-  .inputValidator((d: { token: string; assignment: number[] }) => ({
+  .inputValidator((d: { token: string; assignment: number[]; direction: Direction }) => ({
     token: String(d.token),
     assignment: (d.assignment ?? []).map((n) => Number(n)),
+    direction: d.direction === "right-to-left" ? ("right-to-left" as const) : ("left-to-right" as const),
   }))
   .handler(async ({ data }) => {
     const db = await admin();
@@ -393,9 +404,7 @@ export const submitAssignment = createServerFn({ method: "POST" })
           ...(game.reveal ?? {}),
           __meta: {
             ...(game.reveal?.__meta as GameMeta ?? {}),
-            ready_deadline: !(side === "top" ? game.bottom_ready : game.top_ready)
-              ? new Date(Date.now() + 15000).toISOString()
-              : (game.reveal?.__meta as GameMeta ?? {}).ready_deadline ?? null,
+            direction: data.direction,
           },
         },
         updated_at: new Date().toISOString(),
@@ -403,12 +412,7 @@ export const submitAssignment = createServerFn({ method: "POST" })
       .eq("id", game.id);
 
     const fresh = await getGame(db, game.id);
-    if (fresh.top_ready && fresh.bottom_ready && fresh.direction) {
-      const { data: claimed, error } = await db.from("games").update({ phase: "REVEALING_COLUMN" })
-        .eq("id", game.id).eq("phase", "PLACING_DICE").select("id").maybeSingle();
-      if (error) throw new Error(`No se pudo iniciar la secuencia: ${error.message}`);
-      if (claimed) await runRoundSequence(db, game.id);
-    }
+    if (fresh.top_ready && fresh.bottom_ready) await startRoundSequence(db, game.id);
     return { ok: true };
   });
 
@@ -433,6 +437,7 @@ export const playAgain = createServerFn({ method: "POST" })
         top_taken: false,
         bottom_taken: false,
         winner: null,
+        sequence_started: false,
         updated_at: new Date().toISOString(),
       })
       .eq("id", game.id);

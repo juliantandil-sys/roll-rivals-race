@@ -9,7 +9,6 @@ import {
   COLUMNS,
   ROWS,
   chooseSide,
-  chooseDirection,
   getMyState,
   heartbeat,
   joinGame,
@@ -91,7 +90,6 @@ function GamePage() {
   const doJoin = useServerFn(joinGame);
   const doChooseSide = useServerFn(chooseSide);
   const doSubmit = useServerFn(submitAssignment);
-  const doChooseDirection = useServerFn(chooseDirection);
   const doPlayAgain = useServerFn(playAgain);
   const doHeartbeat = useServerFn(heartbeat);
 
@@ -105,6 +103,7 @@ function GamePage() {
   const [drag, setDrag] = useState<DragState>(null);
   const [selected, setSelected] = useState<number | null>(null);
   const [copied, setCopied] = useState(false);
+  const [direction, setDirection] = useState<Direction>("left-to-right");
   const [historicalTotals, setHistoricalTotals] = useState<{ top: number | null; bottom: number | null }>({ top: null, bottom: null });
   const [now, setNow] = useState(() => Date.now());
 
@@ -189,6 +188,7 @@ function GamePage() {
       roundRef.current = game.round_number;
       setSlots([null, null, null, null]);
       setSelected(null);
+      setDirection(game.direction ?? "left-to-right");
     }
   }, [game]);
 
@@ -212,8 +212,8 @@ function GamePage() {
   const readyDeadline = game?.ready_deadline ? new Date(game.ready_deadline).getTime() : null;
   const readyMilliseconds = readyDeadline ? Math.max(0, readyDeadline - now) : 0;
   const readyRemaining = Math.ceil(readyMilliseconds / 1000);
-  const osadiaActive = game?.phase === "PLACING_DICE" && game.top_ready !== game.bottom_ready && readyMilliseconds > 0;
-  const missingReadySide = game?.top_ready ? "bottom" : "top";
+  const osadiaStart = game?.osadia_started_at ? new Date(game.osadia_started_at).getTime() : null;
+  const osadiaActive = game?.phase === "PLACING_DICE" && (!game.top_ready || !game.bottom_ready) && osadiaStart != null && now >= osadiaStart && readyMilliseconds > 0;
   /* ------------------------- drag & drop ------------------------- */
 
   useEffect(() => {
@@ -276,22 +276,12 @@ function GamePage() {
     }
   };
 
-  const pickDirection = async (direction: Direction) => {
-    if (!token) return;
-    try {
-      await doChooseDirection({ data: { token, direction } });
-      await refresh(token);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "No se pudo elegir el sentido");
-    }
-  };
-
   const confirmReady = async () => {
     if (!token || !dice) return;
     if (slots.some((s) => s == null)) return;
     const assignment = slots.map((id) => dice[id!]!);
     try {
-      await doSubmit({ data: { token, assignment } });
+      await doSubmit({ data: { token, assignment, direction } });
       await refresh(token);
     } catch (e) {
       setError(e instanceof Error ? e.message : "No se pudo confirmar");
@@ -323,8 +313,7 @@ function GamePage() {
 
   const phaseLabel: Record<string, string> = {
     WAITING_FOR_PLAYER: "Esperando al rival",
-    SELECTING_SIDES: game.hand_side && !game.direction ? "El jugador mano elige el sentido" : "Eligiendo lados",
-    SELECTING_DIRECTION: "El jugador mano elige el sentido",
+    SELECTING_SIDES: "Eligiendo lados",
     PLACING_DICE: "Colocá tus dados",
     REVEALING_COLUMN: `Revelando ${COLUMNS[game.current_column]}`,
     MOVING_BALL: `La bola avanza en ${COLUMNS[game.current_column]}`,
@@ -337,9 +326,27 @@ function GamePage() {
       <div className="rounded-2xl border border-border bg-card p-4">
         <p className="mb-3 text-xs text-muted-foreground">
           {myReady
-            ? rivalReady ? "Esperando que la mano elija el sentido..." : "Esperando al rival..."
+            ? rivalReady ? "La ronda comienza automáticamente..." : "Esperando al rival..."
             : "Arrastrá (o tocá y luego elegí columna) para asignar un dado por columna."}
         </p>
+        <div className="mb-4 grid grid-cols-2 rounded-lg border border-border p-1" role="group" aria-label="Sentido de avance">
+          <button
+            type="button"
+            disabled={myReady}
+            onClick={() => setDirection("left-to-right")}
+            className={`rounded-md px-2 py-2 text-xs font-semibold transition-colors ${direction === "left-to-right" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
+          >
+            Izquierda → derecha
+          </button>
+          <button
+            type="button"
+            disabled={myReady}
+            onClick={() => setDirection("right-to-left")}
+            className={`rounded-md px-2 py-2 text-xs font-semibold transition-colors ${direction === "right-to-left" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
+          >
+            Derecha → izquierda
+          </button>
+        </div>
         <div className="flex min-h-14 flex-wrap items-center gap-3">
           {trayItems.length === 0 && <span className="text-sm text-muted-foreground">Todos los dados asignados</span>}
           {trayItems.map((it) => (
@@ -506,12 +513,12 @@ function GamePage() {
         <div className="relative mx-8 sm:mx-12">
           {osadiaActive && (
             <>
-              <div className={`osadia-side-bar osadia-side-left ${missingReadySide === "top" ? "osadia-toward-top" : "osadia-toward-bottom"}`}>
+              <div className="osadia-side-bar osadia-side-left">
                 <strong className="osadia-label">OSADÍA</strong>
                 <span className="osadia-seconds">00:{String(readyRemaining).padStart(2, "0")}</span>
                 <span className="osadia-track"><span className="osadia-progress" style={{ height: `${(readyMilliseconds / 15000) * 100}%` }} /></span>
               </div>
-              <div className={`osadia-side-bar osadia-side-right ${missingReadySide === "top" ? "osadia-toward-top" : "osadia-toward-bottom"}`} aria-hidden="true">
+              <div className="osadia-side-bar osadia-side-right" aria-hidden="true">
                 <strong className="osadia-label">OSADÍA</strong>
                 <span className="osadia-seconds">00:{String(readyRemaining).padStart(2, "0")}</span>
                 <span className="osadia-track"><span className="osadia-progress" style={{ height: `${(readyMilliseconds / 15000) * 100}%` }} /></span>
@@ -592,31 +599,6 @@ function GamePage() {
               INFERIOR {game.bottom_taken && "(ocupado)"}
             </Button>
           </div>
-        </div>
-      )}
-
-      {side && game.phase === "PLACING_DICE" && game.hand_side && !game.direction && (
-        <div className="fixed bottom-4 right-4 z-40 w-64 rounded-2xl border border-border bg-card p-4 text-center shadow-xl">
-          <h2 className="text-sm font-bold">Mano de la ronda</h2>
-          <div className="mt-3 flex flex-col items-center gap-2">
-            <div className="flex items-center gap-2"><Die value={game.top_hand_roll ?? 1} size="sm" /><span className="text-xs text-muted-foreground">Superior</span></div>
-            <div className="flex items-center gap-2"><Die value={game.bottom_hand_roll ?? 1} size="sm" /><span className="text-xs text-muted-foreground">Inferior</span></div>
-          </div>
-          <p className="mt-3 text-xs text-muted-foreground">
-            Mano: <strong className="text-foreground">{game.hand_side === "top" ? "Superior" : "Inferior"}</strong>
-          </p>
-          {myReady && rivalReady ? (
-            game.hand_side === side ? (
-              <div className="mt-3 grid grid-cols-2 gap-2">
-                <Button size="sm" onClick={() => pickDirection("left-to-right")}>Izquierda → derecha</Button>
-                <Button size="sm" variant="secondary" onClick={() => pickDirection("right-to-left")}>Derecha → izquierda</Button>
-              </div>
-            ) : (
-              <p className="mt-3 text-xs text-muted-foreground">Esperando que la mano elija el sentido.</p>
-            )
-          ) : (
-            <p className="mt-3 text-xs text-muted-foreground">Coloquen los dados y presionen Estoy listo.</p>
-          )}
         </div>
       )}
 
